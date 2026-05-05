@@ -136,7 +136,7 @@ def run_targeted_reindex(
 
         resolved_count = 0
         still_failing_count = 0
-        skipped_count = 0
+        runtime_skipped = 0
         try:
             # 2. group targets by cc_pair (the unit of connector invocation).
             target_rows = (
@@ -176,16 +176,17 @@ def run_targeted_reindex(
             # 6. terminal state on the job + counters + summary snapshot.
             # `still_failing_count` stays 0 here; the connector-invocation
             # follow-up bumps it when the connector yields ConnectorFailure.
-            # `skipped_count` is everything left over after resolved and
-            # still-failing buckets are subtracted, so the three counters
-            # always sum to total_attempted regardless of which path landed
-            # them.
-            skipped_count = max(
+            # `runtime_skipped` is whatever fell through the per-target
+            # loop without resolving or still-failing. It is added on top
+            # of the create-time skipped_count (dedup + upstream errors
+            # the API already counted) so the three counters always reflect
+            # the total skip universe across both phases.
+            runtime_skipped = max(
                 0, total_attempted - resolved_count - still_failing_count
             )
             job.resolved_count = resolved_count
             job.still_failing_count = still_failing_count
-            job.skipped_count = skipped_count
+            job.skipped_count = (job.skipped_count or 0) + runtime_skipped
             job.resolved_summary = summary
             job.completed_at = datetime.datetime.now(datetime.timezone.utc)
             job.status = IndexingStatus.SUCCESS
@@ -230,9 +231,9 @@ def run_targeted_reindex(
             raise
 
     log.info(
-        "Targeted reindex done: resolved=%d skipped=%d still_failing=%d",
+        "Targeted reindex done: resolved=%d runtime_skipped=%d still_failing=%d",
         resolved_count,
-        skipped_count,
+        runtime_skipped,
         still_failing_count,
     )
 
