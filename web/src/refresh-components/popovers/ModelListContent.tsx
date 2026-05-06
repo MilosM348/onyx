@@ -7,7 +7,7 @@ import { Button, LineItemButton, Text } from "@opal/components";
 import { SvgCheck, SvgChevronRight } from "@opal/icons";
 import { Section } from "@/layouts/general-layouts";
 import { LLMOption } from "./interfaces";
-import { buildLlmOptions, groupLlmOptions } from "./LLMPopover";
+import { buildLlmOptions, groupLlmOptions } from "./llmUtils";
 import { LLMProviderDescriptor } from "@/interfaces/llm";
 import {
   Collapsible,

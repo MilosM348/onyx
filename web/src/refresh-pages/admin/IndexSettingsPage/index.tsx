@@ -18,7 +18,6 @@ import {
   Divider,
   LinkButton,
   MessageCard,
-  OpenButton,
   SelectCard,
   Text,
 } from "@opal/components";
@@ -83,13 +82,10 @@ import {
   useSecondarySearchSettings,
 } from "@/hooks/useSearchSettings";
 import { useLlmDefaults } from "@/hooks/useLanguageModels";
+import ModelPickerPopover from "@/refresh-components/popovers/ModelPickerPopover";
 import Spacer from "@/refresh-components/Spacer";
 import useFilter from "@/hooks/useFilter";
-import Popover from "@/refresh-components/Popover";
-import ModelListContent from "@/refresh-components/popovers/ModelListContent";
-import type { LLMOption } from "@/refresh-components/popovers/interfaces";
 import type { RichStr } from "@opal/types";
-import { getModelIcon } from "@/lib/llmConfig";
 import { ProviderCredentialsModal } from "@/refresh-pages/admin/IndexSettingsPage/modals";
 
 const route = ADMIN_ROUTES.INDEX_SETTINGS;
@@ -164,101 +160,6 @@ function EmbeddingProviderInfo({ providerName }: EmbeddingProviderInfoProps) {
         </LinkButton>
       )}
     </>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Contextual RAG LLM picker
-// ---------------------------------------------------------------------------
-
-interface LlmPickerProps {
-  modelName: string | null;
-  providerName: string | null;
-  onChange: (next: { modelName: string; providerName: string }) => void;
-  disabled?: boolean;
-  /**
-   * When true, restricts the popover to vision-capable models (those with
-   * `supports_image_input === true`). Used by the Captioning LLM picker;
-   * leave unset for any-model use cases like Contextual Retrieval.
-   */
-  requiresImageInput?: boolean;
-}
-
-/**
- * Single-select LLM picker bound to external state, unlike `LLMPopover`
- * which is wired to `LlmManager.currentLlm` and would mutate the user's
- * default chat model on select. Reuses the same popover primitives
- * (`Popover`, `OpenButton`, `ModelListContent`) for visual parity.
- *
- * Emits `providerName = LLMOption.name` (the LLM provider's instance name like
- * "OpenAI"), which is what the backend's `validate_contextual_rag_model` looks
- * up via `fetch_existing_llm_provider(name=...)`.
- */
-function LlmPicker({
-  modelName,
-  providerName,
-  onChange,
-  disabled,
-  requiresImageInput,
-}: LlmPickerProps) {
-  const [open, setOpen] = useState(false);
-  const { llmProviders, isLoading } = useLlmDefaults();
-
-  const isSelected = useCallback(
-    (option: LLMOption) =>
-      option.modelName === modelName && option.name === providerName,
-    [modelName, providerName]
-  );
-
-  const handleSelect = useCallback(
-    (option: LLMOption) => {
-      onChange({ modelName: option.modelName, providerName: option.name });
-      setOpen(false);
-    },
-    [onChange]
-  );
-
-  const { displayName, providerType } = useMemo(() => {
-    if (!modelName || !providerName || !llmProviders) {
-      return { displayName: null as string | null, providerType: null };
-    }
-    for (const p of llmProviders) {
-      if (p.name !== providerName) continue;
-      const cfg = p.model_configurations.find((m) => m.name === modelName);
-      if (cfg) {
-        return {
-          displayName: cfg.display_name || cfg.name,
-          providerType: p.provider,
-        };
-      }
-    }
-    return { displayName: modelName, providerType: null };
-  }, [llmProviders, modelName, providerName]);
-
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <Popover.Trigger asChild disabled={disabled}>
-        <OpenButton
-          disabled={disabled}
-          icon={
-            providerType
-              ? getModelIcon(providerType, modelName ?? "")
-              : undefined
-          }
-        >
-          {displayName ?? "Select a model"}
-        </OpenButton>
-      </Popover.Trigger>
-      <Popover.Content side="top" align="end" width="xl">
-        <ModelListContent
-          llmProviders={llmProviders}
-          isLoading={isLoading}
-          onSelect={handleSelect}
-          isSelected={isSelected}
-          requiresImageInput={requiresImageInput}
-        />
-      </Popover.Content>
-    </Popover>
   );
 }
 
@@ -799,6 +700,36 @@ export default function IndexSettingsPage() {
       }
     },
     [llmProviders]
+  );
+
+  // Resolve defaultVision → model_configuration_id for ModelPickerPopover.
+  const captioningModelConfigId = useMemo((): number | null => {
+    if (!defaultVision || !llmProviders) return null;
+    for (const p of llmProviders) {
+      if (p.name !== defaultVision.providerName) continue;
+      const mc = p.model_configurations.find(
+        (m) => m.name === defaultVision.modelName
+      );
+      if (mc?.id != null) return mc.id;
+    }
+    return null;
+  }, [defaultVision, llmProviders]);
+
+  const handleCaptioningModelChangeById = useCallback(
+    (id: number | null) => {
+      if (!id) return;
+      for (const p of llmProviders ?? []) {
+        const mc = p.model_configurations.find((m) => m.id === id);
+        if (mc) {
+          void handleCaptioningModelChange({
+            modelName: mc.name,
+            providerName: p.name,
+          });
+          break;
+        }
+      }
+    },
+    [llmProviders, handleCaptioningModelChange]
   );
 
   const initialFormValues: IndexSettingsFormValues = useMemo(
@@ -1477,22 +1408,43 @@ export default function IndexSettingsPage() {
                               disabled={!values.enable_contextual_rag}
                               withLabel
                             >
-                              <LlmPicker
-                                modelName={values.contextual_rag_llm_name}
-                                providerName={
-                                  values.contextual_rag_llm_provider
-                                }
-                                disabled={!values.enable_contextual_rag}
-                                onChange={({ modelName, providerName }) => {
-                                  void setFieldValue(
-                                    "contextual_rag_llm_name",
-                                    modelName
-                                  );
-                                  void setFieldValue(
-                                    "contextual_rag_llm_provider",
-                                    providerName
-                                  );
+                              <ModelPickerPopover
+                                value={(() => {
+                                  const modelName =
+                                    values.contextual_rag_llm_name;
+                                  const providerName =
+                                    values.contextual_rag_llm_provider;
+                                  if (!modelName) return null;
+                                  for (const p of llmProviders ?? []) {
+                                    if (providerName && p.name !== providerName)
+                                      continue;
+                                    const mc = p.model_configurations.find(
+                                      (m) => m.name === modelName
+                                    );
+                                    if (mc?.id != null) return mc.id;
+                                  }
+                                  return null;
+                                })()}
+                                onChange={(id) => {
+                                  if (!id) return;
+                                  for (const p of llmProviders ?? []) {
+                                    const mc = p.model_configurations.find(
+                                      (m) => m.id === id
+                                    );
+                                    if (mc) {
+                                      void setFieldValue(
+                                        "contextual_rag_llm_name",
+                                        mc.name
+                                      );
+                                      void setFieldValue(
+                                        "contextual_rag_llm_provider",
+                                        p.name
+                                      );
+                                      break;
+                                    }
+                                  }
                                 }}
+                                disabled={!values.enable_contextual_rag}
                               />
                             </InputHorizontal>
                           </Disabled>
@@ -1555,13 +1507,10 @@ export default function IndexSettingsPage() {
                               disabled={!imageProcessingEnabled}
                               withLabel
                             >
-                              <LlmPicker
-                                modelName={defaultVision?.modelName ?? null}
-                                providerName={
-                                  defaultVision?.providerName ?? null
-                                }
+                              <ModelPickerPopover
+                                value={captioningModelConfigId}
+                                onChange={handleCaptioningModelChangeById}
                                 disabled={!imageProcessingEnabled}
-                                onChange={handleCaptioningModelChange}
                                 requiresImageInput
                               />
                             </InputHorizontal>

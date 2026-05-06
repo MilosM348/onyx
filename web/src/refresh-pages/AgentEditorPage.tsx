@@ -21,8 +21,7 @@ import {
   InputVertical,
 } from "@opal/layouts";
 import { useFormikContext } from "formik";
-import LLMSelector from "@/components/llm/LLMSelector";
-import { parseLlmDescriptor, structureValue } from "@/lib/llmConfig/utils";
+import ModelPickerPopover from "@/refresh-components/popovers/ModelPickerPopover";
 import { useLLMProviders } from "@/hooks/useLanguageModels";
 import {
   STARTER_MESSAGES_EXAMPLES,
@@ -494,40 +493,6 @@ export default function AgentEditorPage({
   const canUpdateFeaturedStatus = isAdmin || isCurator;
   const vectorDbEnabled = useVectorDbEnabled();
   const isPaidEnterpriseFeaturesEnabled = usePaidEnterpriseFeaturesEnabled();
-
-  // LLM Model Selection
-  const getCurrentLlm = useCallback(
-    (values: any, llmProviders: any) =>
-      values.llm_model_version_override && values.llm_model_provider_override
-        ? (() => {
-            const provider = llmProviders?.find(
-              (p: any) => p.name === values.llm_model_provider_override
-            );
-            return structureValue(
-              values.llm_model_provider_override,
-              provider?.provider || "",
-              values.llm_model_version_override
-            );
-          })()
-        : null,
-    []
-  );
-
-  const onLlmSelect = useCallback(
-    (selected: string | null, setFieldValue: any) => {
-      if (selected === null) {
-        setFieldValue("llm_model_version_override", null);
-        setFieldValue("llm_model_provider_override", null);
-      } else {
-        const { modelName, name } = parseLlmDescriptor(selected);
-        if (modelName && name) {
-          setFieldValue("llm_model_version_override", modelName);
-          setFieldValue("llm_model_provider_override", name);
-        }
-      }
-    },
-    []
-  );
 
   // Hooks for Knowledge section
   const { allRecentFiles, beginUpload } = useProjectsContext();
@@ -1571,16 +1536,56 @@ export default function AgentEditorPage({
                                   title="Default Model"
                                   description="This model will be used by Onyx by default in your chats."
                                 >
-                                  <LLMSelector
-                                    name="llm_model"
-                                    llmProviders={llmProviders ?? []}
-                                    currentLlm={getCurrentLlm(
-                                      values,
-                                      llmProviders
-                                    )}
-                                    onSelect={(selected) =>
-                                      onLlmSelect(selected, setFieldValue)
-                                    }
+                                  <ModelPickerPopover
+                                    value={(() => {
+                                      const modelName =
+                                        values.llm_model_version_override;
+                                      const providerName =
+                                        values.llm_model_provider_override;
+                                      if (!modelName) return null;
+                                      for (const p of llmProviders ?? []) {
+                                        if (
+                                          providerName &&
+                                          p.name !== providerName
+                                        )
+                                          continue;
+                                        const mc = p.model_configurations.find(
+                                          (m) => m.name === modelName
+                                        );
+                                        if (mc?.id != null) return mc.id;
+                                      }
+                                      return null;
+                                    })()}
+                                    onChange={(id) => {
+                                      if (id === null) {
+                                        void setFieldValue(
+                                          "llm_model_version_override",
+                                          null
+                                        );
+                                        void setFieldValue(
+                                          "llm_model_provider_override",
+                                          null
+                                        );
+                                        return;
+                                      }
+                                      for (const p of llmProviders ?? []) {
+                                        const mc = p.model_configurations.find(
+                                          (m) => m.id === id
+                                        );
+                                        if (mc) {
+                                          void setFieldValue(
+                                            "llm_model_version_override",
+                                            mc.name
+                                          );
+                                          void setFieldValue(
+                                            "llm_model_provider_override",
+                                            p.name
+                                          );
+                                          break;
+                                        }
+                                      }
+                                    }}
+                                    personaId={existingAgent?.id}
                                   />
                                 </InputHorizontal>
                                 <InputHorizontal
