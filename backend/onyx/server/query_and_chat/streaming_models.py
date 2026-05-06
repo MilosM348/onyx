@@ -56,6 +56,7 @@ class StreamingType(Enum):
     INTERMEDIATE_REPORT_CITED_DOCS = "intermediate_report_cited_docs"
 
     CODING_AGENT_START = "coding_agent_start"
+    CODING_AGENT_THINKING_DELTA = "coding_agent_thinking_delta"
     CODING_AGENT_FINAL = "coding_agent_final"
 
     BASH_TOOL_START = "bash_tool_start"
@@ -382,6 +383,13 @@ class CodingAgentStart(BaseObj):
     repo: str
 
 
+class CodingAgentThinkingDelta(BaseObj):
+    type: Literal["coding_agent_thinking_delta"] = (
+        StreamingType.CODING_AGENT_THINKING_DELTA.value
+    )
+    content: str
+
+
 class CodingAgentFinal(BaseObj):
     type: Literal["coding_agent_final"] = StreamingType.CODING_AGENT_FINAL.value
     answer: str
@@ -453,6 +461,7 @@ PacketObj = Union[
     IntermediateReportCitedDocs,
     # Coding Agent Packets
     CodingAgentStart,
+    CodingAgentThinkingDelta,
     CodingAgentFinal,
     # Bash Tool Packets
     BashToolStart,

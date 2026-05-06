@@ -3,7 +3,6 @@ from collections.abc import Callable
 
 from onyx.chat.emitter import Emitter
 from onyx.chat.llm_loop import construct_message_history
-from onyx.chat.llm_step import run_llm_step
 from onyx.chat.llm_step import run_llm_step_pkt_generator
 from onyx.chat.models import ChatMessageSimple
 from onyx.chat.models import ToolCallSimple
@@ -34,6 +33,7 @@ from onyx.server.query_and_chat.placement import Placement
 from onyx.server.query_and_chat.streaming_models import AgentResponseDelta
 from onyx.server.query_and_chat.streaming_models import AgentResponseStart
 from onyx.server.query_and_chat.streaming_models import CodingAgentFinal
+from onyx.server.query_and_chat.streaming_models import CodingAgentThinkingDelta
 from onyx.server.query_and_chat.streaming_models import Packet
 from onyx.server.query_and_chat.streaming_models import PacketException
 from onyx.server.query_and_chat.streaming_models import SectionEnd
@@ -319,19 +319,19 @@ def run_coding_agent_call(
                             else None
                         )
 
-                        llm_step_result, has_reasoned = run_llm_step(
-                            emitter=emitter,
+                        step_placement = Placement(
+                            turn_index=turn_index,
+                            tab_index=tab_index,
+                            sub_turn_index=llm_cycle_count + reasoning_cycles,
+                        )
+                        step_generator = run_llm_step_pkt_generator(
                             history=constructed_history,
                             tool_definitions=get_coding_agent_tool_definitions(
                                 include_think_tool=not is_reasoning_model
                             ),
                             tool_choice=ToolChoiceOptions.REQUIRED,
                             llm=llm,
-                            placement=Placement(
-                                turn_index=turn_index,
-                                tab_index=tab_index,
-                                sub_turn_index=llm_cycle_count + reasoning_cycles,
-                            ),
+                            placement=step_placement,
                             citation_processor=None,
                             state_container=None,
                             reasoning_effort=ReasoningEffort.LOW,
@@ -342,6 +342,29 @@ def run_coding_agent_call(
                             is_deep_research=False,
                             max_tokens=2048,
                         )
+
+                        while True:
+                            try:
+                                packet = next(step_generator)
+                                if isinstance(
+                                    packet.obj,
+                                    (AgentResponseStart, AgentResponseDelta),
+                                ):
+                                    if isinstance(packet.obj, AgentResponseDelta):
+                                        emitter.emit(
+                                            Packet(
+                                                placement=step_placement,
+                                                obj=CodingAgentThinkingDelta(
+                                                    content=packet.obj.content
+                                                ),
+                                            )
+                                        )
+                                else:
+                                    emitter.emit(packet)
+                            except StopIteration as e:
+                                llm_step_result, has_reasoned = e.value
+                                break
+
                         if has_reasoned:
                             reasoning_cycles += 1
 
